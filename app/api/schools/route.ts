@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { writeFile, mkdir } from 'fs/promises';
 import path from 'path';
 import pool from '@/lib/db';
+import cloudinary from '@/lib/cloudinary';
 
 export async function POST(request: NextRequest) {
   try {
@@ -25,18 +26,41 @@ export async function POST(request: NextRequest) {
     let imagePath = '';
     
     if (image && image.size > 0) {
-      const bytes = await image.arrayBuffer();
-      const buffer = Buffer.from(bytes);
+      // Check if Cloudinary is configured
+      const useCloudinary = process.env.CLOUDINARY_CLOUD_NAME && 
+                           process.env.CLOUDINARY_API_KEY && 
+                           process.env.CLOUDINARY_API_SECRET;
 
-      const uploadDir = path.join(process.cwd(), 'public', 'schoolImages');
-      await mkdir(uploadDir, { recursive: true });
+      if (useCloudinary) {
+        // Upload to Cloudinary (for production/Vercel)
+        const bytes = await image.arrayBuffer();
+        const buffer = Buffer.from(bytes);
+        
+        // Convert buffer to base64
+        const base64Image = `data:${image.type};base64,${buffer.toString('base64')}`;
+        
+        // Upload to Cloudinary
+        const uploadResult = await cloudinary.uploader.upload(base64Image, {
+          folder: 'schools',
+          resource_type: 'auto',
+        });
+        
+        imagePath = uploadResult.secure_url;
+      } else {
+        // Local file storage (for development)
+        const bytes = await image.arrayBuffer();
+        const buffer = Buffer.from(bytes);
 
-      const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1E9)}`;
-      const extension = image.name.split('.').pop();
-      const filename = `school-${uniqueSuffix}.${extension}`;
-      
-      await writeFile(path.join(uploadDir, filename), buffer);
-      imagePath = `/schoolImages/${filename}`;
+        const uploadDir = path.join(process.cwd(), 'public', 'schoolImages');
+        await mkdir(uploadDir, { recursive: true });
+
+        const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1E9)}`;
+        const extension = image.name.split('.').pop();
+        const filename = `school-${uniqueSuffix}.${extension}`;
+        
+        await writeFile(path.join(uploadDir, filename), buffer);
+        imagePath = `/schoolImages/${filename}`;
+      }
     }
 
     const [result] = await pool.execute(
